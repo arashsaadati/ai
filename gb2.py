@@ -23,11 +23,21 @@ class Config:
             "persian": [
                 "https://irsafam.org",
                 "https://zaban24.com/ielts",
-                "https://ielts-rooz.ir"
+                "https://ielts-rooz.ir",
+                "https://www.ieltstoday.com",
+                "https://www.ieltscity.com",
+                "https://mohsen-ielts.com",
+                "https://www.ieltstehran.com",
+                "https://ieltsidp.com",
+                "https://blog.faradars.org/ielts",
+                "https://7learn.com/blog/ielts",
+                "https://ili.ut.ac.ir/ielts"
             ],
             "international": [
                 "https://www.ielts.org",
-                "https://takeielts.britishcouncil.org"
+                "https://www.cambridgeenglish.org/exams-and-tests/ielts",
+                "https://takeielts.britishcouncil.org",
+                "https://ielts.idp.com"
             ]
         }
         
