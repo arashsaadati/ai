@@ -78,7 +78,7 @@ class Config:
             test_trans = self.translator.translate("hello", src='en', dest='fa').text
             assert test_trans == "سلام"
         except:
-            print("⚠️ خطا در راه‌اندازی مترجم، ترجمه غیرفعال شد")
+            print("Error on setting up translator: fallback to Google Translate")
             self.translator = None
     
     def setup_nlp_model(self):
@@ -92,12 +92,12 @@ class Config:
             test_pred = self.question_detector("هزینه آزمون چقدر است؟")[0]
             assert test_pred['label'] == 'LABEL_1'
         except Exception as e:
-            print(f"⚠️ خطا در بارگذاری مدل NLP: {str(e)}")
+            print(f"Error on setup NLP {str(e)}")
             self.question_detector = None
     
     def switch_to_backup(self):
         """جابجایی به منابع پشتیبان"""
-        print("🔁 تعویض به منابع پشتیبان...")
+        print("Switching to backup sources...")
         self.current_sources = self.backup_sources.copy()
 
 config = Config()
@@ -139,7 +139,7 @@ def extract_links(url):
         
         return list(links)[:15]
     except Exception as e:
-        print(f"⚠️ خطا در استخراج لینک از {url}: {str(e)}")
+        print(f"Error in extraction {url}: {str(e)}")
         return []
 
 def clean_text(text):
@@ -209,7 +209,7 @@ def process_source(url, source_type):
     try:
         links = extract_links(url)
         if not links:
-            print(f"⚠️ هیچ لینک مرتبطی در {url} یافت نشد")
+            print(f"No link find in {url}")
             return []
         
         all_qa = []
@@ -217,7 +217,7 @@ def process_source(url, source_type):
             futures = {executor.submit(smart_request, link): link for link in links}
             for future in tqdm(concurrent.futures.as_completed(futures), 
                              total=len(links), 
-                             desc=f"پردازش {url[:30]}..."):
+                             desc=f"Process {url[:30]}..."):
                 link = futures[future]
                 try:
                     response = future.result()
@@ -228,18 +228,18 @@ def process_source(url, source_type):
                                           if p.get_text().strip()])
                         all_qa.extend(generate_qa(content, source_type))
                 except Exception as e:
-                    print(f"⚠️ خطا در پردازش {link}: {str(e)}")
+                    print(f"Error in process {link}: {str(e)}")
         
         return all_qa
     except Exception as e:
-        print(f"⚠️ خطای شدید در پردازش {url}: {str(e)}")
+        print(f"Error in process {url}: {str(e)}")
         return []
 
 def main():
-    print("\n🔍 شروع فرآیند جمع‌آوری داده‌های آیلتس با سیستم هوشمند\n")
-    print(f"⚙️ تنظیمات فعلی:")
-    print(f"- مترجم: {'فعال' if config.translator else 'غیرفعال'}")
-    print(f"- مدل NLP: {'فعال' if config.question_detector else 'غیرفعال'}")
+    print("\nStart scrabing\n")
+    print(f"Current settings:")
+    print(f"- Translate: {'Active' if config.translator else 'Deactive'}")
+    print(f"- NLP Model: {'Active' if config.question_detector else 'Deactive'}")
     
     dataset = {
         "metadata": {
@@ -253,16 +253,16 @@ def main():
     
     # پردازش منابع
     for lang, sources in config.current_sources.items():
-        print(f"\n🌐 پردازش منابع {lang}...")
+        print(f"\nResource process {lang}...")
         for source in sources:
             qa_pairs = process_source(source, lang)
             if not qa_pairs and source in config.primary_sources[lang]:
-                print(f"⚠️ منبع اصلی {source} پاسخ نداد، استفاده از پشتیبان...")
+                print(f"Main resource {source} not responding")
                 config.switch_to_backup()
                 qa_pairs = process_source(source, lang)
                 
             dataset["data"].extend(qa_pairs)
-            print(f"✅ {len(qa_pairs)} سوال از {source} اضافه شد")
+            print(f"{len(qa_pairs)} question from {source} added")
     
     # حذف تکراری‌ها
     unique_qa = []
@@ -281,10 +281,10 @@ def main():
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(dataset, f, ensure_ascii=False, indent=4)
     
-    print(f"\n🎉 دیتاست نهایی با {len(unique_qa)} سوال-پاسخ ذخیره شد:")
-    print(f"- فایل: {output_file}")
-    print(f"- مدل استفاده شده: {dataset['metadata']['model']}")
-    print(f"- منابع: {len(dataset['metadata']['sources']['persian'])} فارسی, {len(dataset['metadata']['sources']['international'])} بین‌المللی")
+    print(f"\nDataset with {len(unique_qa)} q/a saved")
+    print(f"- File: {output_file}")
+    print(f"- Model: {dataset['metadata']['model']}")
+    print(f"- Resource: {len(dataset['metadata']['sources']['persian'])} persian, {len(dataset['metadata']['sources']['international'])} international")
 
 if __name__ == "__main__":
     main()
