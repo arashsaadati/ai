@@ -121,7 +121,7 @@ def smart_request(url, max_retries=3):
             response.raise_for_status()
             return response
         except requests.exceptions.RequestException as e:
-            print(f"⚠️ خطا در دریافت {url} (تلاش {i+1}/{max_retries}): {str(e)}")
+            print(f"error on get {url} (try {i+1}/{max_retries}): {str(e)}")
             if i == max_retries - 1:
                 return None
 
