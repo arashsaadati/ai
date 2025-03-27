@@ -1,0 +1,6 @@
+transformers==4.28.1
+torch==2.6.0
+datasets==2.11.0
+flask==2.3.2
+regex==2024.11.6
+tokenizers==0.13.3
