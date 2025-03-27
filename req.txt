@@ -6,3 +6,8 @@ regex==2024.11.6
 tokenizers==0.13.3
 requests
 beautifulsoup4
+googletrans==4.0.0-rc1
+tqdm
+persiannlp 
+torch 
+sentencepiece
