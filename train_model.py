@@ -12,6 +12,9 @@ with open('ielts_dataset.json', 'r', encoding='utf-8') as f:
 
 
 
+
+
+
 # تبدیل به فرمت Dataset
 # اینجا مستقیم از data استفاده می‌کنیم چون خودش یه لیست از دیکشنری‌هاست
 dataset = Dataset.from_dict({
@@ -49,6 +52,7 @@ def preprocess_function(examples):
 
 train_test_split = dataset.train_test_split(test_size=0.1)
 tokenized_train_dataset = train_test_split['train'].map(preprocess_function, batched=True)
+
 tokenized_eval_dataset = train_test_split['test'].map(preprocess_function, batched=True)
 
 
