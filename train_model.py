@@ -1,37 +1,46 @@
 import json
-from transformers import DistilBertTokenizerFast, DistilBertForQuestionAnswering, Trainer, TrainingArguments
+from transformers import AutoTokenizer, AutoModelForQuestionAnswering, Trainer, TrainingArguments
 from datasets import Dataset
 import torch
+from tqdm import tqdm
 
-# Use multilingual model for Persian
-model_name = "distilbert-base-multilingual-cased"
-tokenizer = DistilBertTokenizerFast.from_pretrained(model_name)
-model = DistilBertForQuestionAnswering.from_pretrained(model_name)
+# 1. Use XLM-RoBERTa for better multilingual support
+model_name = "xlm-roberta-base"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForQuestionAnswering.from_pretrained(model_name)
 
-# Load and verify dataset
+# 2. Enhanced dataset validation
 with open('ielts_dataset.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)["data"]
+    raw_data = json.load(f)["data"]
 
-# Validate each sample
-valid_data = []
-for sample in data:
-    context = sample["context"]
-    answer = sample["answer"]
-    if answer in context:
-        valid_data.append(sample)
-    else:
-        print(f"Answer not found in context: {answer} | Context: {context}")
+processed_data = []
+for sample in tqdm(raw_data, desc="Validating samples"):
+    context = sample["context"].strip()
+    answer = sample["answer"].strip()
+    question = sample["question"].strip()
+    
+    # Find all answer occurrences
+    start_indices = [i for i in range(len(context)) if context.startswith(answer, i)]
+    
+    if not start_indices:
+        print(f"⚠️ Answer not found: '{answer}' in context: '{context[:50]}...'")
+        continue
+    
+    processed_data.append({
+        "question": question,
+        "context": context,
+        "answer": answer,
+        "answer_start": start_indices[0],  # Use first occurrence
+        "answer_end": start_indices[0] + len(answer)
+    })
 
-print(f"Using {len(valid_data)}/{len(data)} valid samples")
+print(f"✅ Using {len(processed_data)}/{len(raw_data)} valid samples")
 
-dataset = Dataset.from_dict({
-    'question': [item['question'] for item in valid_data],
-    'context': [item['context'] for item in valid_data],
-    'answer': [item['answer'] for item in valid_data]
-})
+# 3. Improved dataset preparation
+dataset = Dataset.from_pandas(pd.DataFrame(processed_data))
 
 def preprocess_function(examples):
-    inputs = tokenizer(
+    tokenized_inputs = tokenizer(
         examples["question"],
         examples["context"],
         max_length=384,
@@ -42,65 +51,82 @@ def preprocess_function(examples):
         padding="max_length"
     )
 
-    sample_map = inputs.pop("overflow_to_sample_mapping")
-    offset_mapping = inputs.pop("offset_mapping")
+    sample_mapping = tokenized_inputs.pop("overflow_to_sample_mapping")
+    offset_mapping = tokenized_inputs.pop("offset_mapping")
 
-    inputs["start_positions"] = []
-    inputs["end_positions"] = []
+    tokenized_inputs["start_positions"] = []
+    tokenized_inputs["end_positions"] = []
 
     for i, offsets in enumerate(offset_mapping):
-        sample_idx = sample_map[i]
-        answer = examples["answer"][sample_idx]
-        start_char = examples["context"][sample_idx].find(answer)
-        end_char = start_char + len(answer)
+        input_ids = tokenized_inputs["input_ids"][i]
+        sequence_ids = tokenized_inputs.sequence_ids(i)
 
-        sequence_ids = inputs.sequence_ids(i)
-        context_start = sequence_ids.index(1)
-        context_end = len(sequence_ids) - 1 - sequence_ids[::-1].index(1)
+        # Get the sample context
+        sample_index = sample_mapping[i]
+        answer_start = examples["answer_start"][sample_index]
+        answer_end = examples["answer_end"][sample_index]
 
-        # If answer is not in the context, set to (0, 0)
-        if start_char < offsets[context_start][0] or end_char > offsets[context_end][1]:
-            inputs["start_positions"].append(0)
-            inputs["end_positions"].append(0)
+        # Find start and end of context
+        context_start = 0
+        while sequence_ids[context_start] != 1:
+            context_start += 1
+        
+        context_end = len(sequence_ids) - 1
+        while sequence_ids[context_end] != 1:
+            context_end -= 1
+
+        # If answer is out of span
+        if offsets[context_start][0] > answer_end or offsets[context_end][1] < answer_start:
+            tokenized_inputs["start_positions"].append(0)
+            tokenized_inputs["end_positions"].append(0)
         else:
-            # Find start and end token positions
-            idx = context_start
-            while idx <= context_end and offsets[idx][0] <= start_char:
-                idx += 1
-            inputs["start_positions"].append(idx - 1)
+            # Find token positions
+            start_token = context_start
+            while start_token <= context_end and offsets[start_token][0] <= answer_start:
+                start_token += 1
+            tokenized_inputs["start_positions"].append(start_token - 1)
 
-            idx = context_end
-            while idx >= context_start and offsets[idx][1] >= end_char:
-                idx -= 1
-            inputs["end_positions"].append(idx + 1)
+            end_token = context_end
+            while end_token >= context_start and offsets[end_token][1] >= answer_end:
+                end_token -= 1
+            tokenized_inputs["end_positions"].append(end_token + 1)
 
-    return inputs
+    return tokenized_inputs
 
-# Split and process
-dataset = dataset.train_test_split(test_size=0.2)
-train_dataset = dataset["train"].map(preprocess_function, batched=True)
-eval_dataset = dataset["test"].map(preprocess_function, batched=True)
+# 4. Apply preprocessing
+tokenized_dataset = dataset.map(
+    preprocess_function,
+    batched=True,
+    remove_columns=dataset.column_names
+)
 
-# Training
+# 5. Enhanced training configuration
 training_args = TrainingArguments(
-    output_dir="./ielts_model",
+    output_dir="./ielts_model_enhanced",
     evaluation_strategy="steps",
-    eval_steps=500,
-    learning_rate=3e-5,
+    eval_steps=300,
+    save_steps=300,
+    learning_rate=5e-5,
     per_device_train_batch_size=8,
-    num_train_epochs=5,
+    per_device_eval_batch_size=8,
+    num_train_epochs=4,
     weight_decay=0.01,
-    save_total_limit=3,
-    load_best_model_at_end=True
+    warmup_ratio=0.1,
+    logging_dir="./logs",
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    fp16=True  # Enable mixed precision training
 )
 
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
+    train_dataset=tokenized_dataset,
+    eval_dataset=tokenized_dataset,
+    tokenizer=tokenizer,
 )
 
+# 6. Train with progress monitoring
 trainer.train()
-trainer.save_model("./ielts_model")
-tokenizer.save_pretrained("./ielts_model")
+trainer.save_model("./ielts_model_enhanced")
