@@ -11,10 +11,6 @@ with open('ielts_dataset.json', 'r', encoding='utf-8') as f:
     data = json.load(f)["data"]
 
 
-
-
-
-
 # تبدیل به فرمت Dataset
 # اینجا مستقیم از data استفاده می‌کنیم چون خودش یه لیست از دیکشنری‌هاست
 dataset = Dataset.from_dict({
