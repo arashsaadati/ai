@@ -1,9 +1,9 @@
 import json
-from transformers import DistilBertTokenizer, DistilBertForQuestionAnswering, Trainer, TrainingArguments
+from transformers import DistilBertTokenizerFast, DistilBertForQuestionAnswering, Trainer, TrainingArguments
 from datasets import Dataset
 
-# Load model and tokenizer
-tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
+# Load model and fast tokenizer
+tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
 model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
 
 # Load dataset
