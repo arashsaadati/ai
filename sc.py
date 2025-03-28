@@ -76,7 +76,7 @@ def clean_text(text):
     # Remove email addresses
     text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', text)
     # Remove postal addresses (basic pattern)
-    text = re.sub(r'\b\d{1,5}\s+\w+\s+(Street|St|Avenue|Ave|Road|Rd)\b', '', text)
+    text = re.sub(r'\b\d{1,5}\s+\w+\s+(Street|St|Avenue|Ave|Road|Rd|آدرس)\b', '', text)
     
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'\[.*?\]|\(.*?\)|\{.*?\}', '', text)
