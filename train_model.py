@@ -6,7 +6,7 @@ from datasets import Dataset
 tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
 model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
 
-# Dataset loading
+# Dataset loading with validation
 def load_dataset(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:
         raw_data = json.load(f)
@@ -36,13 +36,13 @@ def load_dataset(filepath):
 
 dataset = load_dataset('ielts_dataset.json')
 
-# Preprocessing with dynamic stride calculation
+# Preprocessing with safe stride calculation
 def preprocess_function(examples):
-    # Calculate safe max_length and stride
-    max_length = 384
-    num_special_tokens = 3  # [CLS], [SEP], [SEP]
-    effective_max_len = max_length - num_special_tokens
-    stride = min(64, effective_max_len // 4)  # Ensure stride is at most 1/4 of effective length
+    # Conservative settings to ensure stride < effective max_len
+    max_length = 256  # Reduced maximum length
+    question_max_length = 32  # Reserve space for questions
+    context_max_length = max_length - question_max_length - 3  # Account for special tokens
+    stride = min(32, context_max_length // 4)  # Safe stride value
     
     inputs = tokenizer(
         examples["question"],
@@ -52,7 +52,8 @@ def preprocess_function(examples):
         stride=stride,
         return_overflowing_tokens=True,
         return_offsets_mapping=True,
-        padding="max_length"
+        padding="max_length",
+        return_tensors="pt"
     )
     
     start_positions = []
@@ -102,9 +103,6 @@ def preprocess_function(examples):
                 token_idx -= 1
             end_positions.append(token_idx + 1)
     
-    inputs["start_positions"] = start_positions
-    inputs["end_positions"] = end_positions
-    
     return {
         "input_ids": inputs["input_ids"],
         "attention_mask": inputs["attention_mask"],
@@ -112,39 +110,39 @@ def preprocess_function(examples):
         "end_positions": end_positions
     }
 
-# Dataset preparation
+# Dataset preparation with smaller batches
 train_test_split = dataset.train_test_split(test_size=0.1)
 tokenized_train = train_test_split["train"].map(
     preprocess_function,
     batched=True,
     remove_columns=train_test_split["train"].column_names,
-    batch_size=4
+    batch_size=2  # Very small batch size
 )
 tokenized_eval = train_test_split["test"].map(
     preprocess_function,
     batched=True,
     remove_columns=train_test_split["test"].column_names,
-    batch_size=4
+    batch_size=2
 )
 
 # Training configuration
 training_args = TrainingArguments(
     output_dir="./ielts_model",
     evaluation_strategy="steps",
-    eval_steps=200,
-    save_steps=200,
+    eval_steps=100,
+    save_steps=100,
     learning_rate=3e-5,
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=4,
+    per_device_train_batch_size=2,
+    per_device_eval_batch_size=2,
     num_train_epochs=3,
     weight_decay=0.01,
     warmup_ratio=0.1,
     logging_dir="./logs",
-    logging_steps=50,
+    logging_steps=10,
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    fp16=False,  # Disable mixed precision if issues persist
+    fp16=False,  # Disable mixed precision for stability
     dataloader_num_workers=1
 )
 
