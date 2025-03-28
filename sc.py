@@ -31,7 +31,7 @@ class IELTSConfig:
         self.running = True  # For graceful shutdown
         self.load_sources()
         # self.load_cache()
-        self.setup_models()
+        # self.setup_models()
 
     def load_sources(self):
         """Load sources from external config file"""
