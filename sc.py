@@ -17,21 +17,23 @@ class IELTSConfig:
     def __init__(self):
         self.data_file = "ielts_dataset.json"
         self.cache_file = "ielts_cache.json"
-        self.config_file = "config.json"  # Added config file
+        self.config_file = "sources_config.json"
         self.categories = {
             "articles": ["article", "blog", "post"],
             "faq": ["faq", "questions", "help"],
             "guides": ["guide", "tutorial", "how-to"],
             "news": ["news", "updates"]
         }
+
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept-Language": "en-US,en;q=0.9"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9,fa;q=0.8"
         }
-        self.running = True  # For graceful shutdown
+
         self.load_sources()
-        # self.load_cache()
-        # self.setup_models()
+        self.load_cache()
+        self.setup_models()
+        self.should_stop = False
 
     def load_sources(self):
         """Load sources from external config file"""
@@ -45,57 +47,69 @@ class IELTSConfig:
 
     # Rest of the class methods remain same until save_cache
     def save_cache(self):
-        """Save cache and database with interruption handling"""
-        if not self.running:
-            print("Saving progress before shutdown...")
-        
+        """Save cache and database with progress"""
         with open(self.cache_file, 'w', encoding='utf-8') as f:
             json.dump(self.cache, f, ensure_ascii=False, indent=4)
         with open(self.data_file, 'w', encoding='utf-8') as f:
             json.dump(self.database, f, ensure_ascii=False, indent=4)
 
-    # Rest of the class methods...
-
-config = IELTSConfig()
-
-# Signal handler for graceful shutdown
-def signal_handler(sig, frame):
-    print("\nReceived interrupt signal. Saving progress...")
-    config.running = False
-    config.save_cache()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
+    # ... (other existing methods) ...
 
 def clean_text(text):
     """Clean text content and remove sensitive information"""
     if not text:
         return ""
-    # Remove phone numbers (various formats)
-    text = re.sub(r'(\+\d{1,3}[-.\s]?)?(\d{2,4}[-.\s]?){2,3}\d{2,4}', '', text)
-    # Remove email addresses
-    text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', text)
-    # Remove postal addresses (basic pattern)
-    text = re.sub(r'\b\d{1,5}\s+\w+\s+(Street|St|Avenue|Ave|Road|Rd|آدرس)\b', '', text)
-    
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'\[.*?\]|\(.*?\)|\{.*?\}', '', text)
     text = re.sub(r'\b(?:https?|www|ftp)\S+', '', text)
+    # Remove phone numbers
+    text = re.sub(r'(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', '', text)
+    # Remove emails
+    text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', text)
+    # Remove postal addresses (basic pattern)
+    text = re.sub(r'\b\d{1,5}\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\b', '', text)
     return text.strip()
 
-# Rest of the functions until main...
+# ... (extract_content, generate_qa_pairs, is_question remain same) ...
+
+def process_url(url, source_type, config):
+    """Process a single URL with pause checking"""
+    if config.should_stop:
+        return []
+    content, context_sentences, category = extract_content(url)
+    if not content:
+        return []
+
+    qa_pairs = generate_qa_pairs(content, context_sentences, source_type)
+    config.mark_url_scraped(url, category)
+    return [{
+        **pair,
+        "source_url": url,
+        "category": category,
+        "timestamp": datetime.datetime.now().isoformat()
+    } for pair in qa_pairs]
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C for graceful stopping"""
+    print("\nStopping process... Saving progress...")
+    config.should_stop = True
+
+config = IELTSConfig()
 
 def main():
+    signal.signal(signal.SIGINT, signal_handler)
+    
     print("\nStarting IELTS data collection process")
     print(f"Existing database: {len(config.database.get('data', []))} Q&A pairs")
     print(f"Sources: {len(config.sources['persian'])} Persian, {len(config.sources['international'])} International")
 
     all_new_data = []
+    processed_urls = 0
 
     # Process Persian sources
     print("\nProcessing Persian sources...")
     for url in config.sources["persian"]:
-        if not config.running:
+        if config.should_stop:
             break
         try:
             response = requests.get(url, headers=config.headers, timeout=10)
@@ -104,19 +118,24 @@ def main():
                     if a['href'] and not a['href'].startswith('#')]
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = [executor.submit(process_url, link, "persian") for link in links[:20]]
+                futures = [executor.submit(process_url, link, "persian", config) for link in links[:20]]
                 for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
-                    if not config.running:
-                        executor.shutdown(wait=False)
+                    if config.should_stop:
                         break
                     all_new_data.extend(future.result())
+                    processed_urls += 1
+                    if processed_urls % 10 == 0:  # Save every 10 URLs
+                        update_database(all_new_data)
+                        config.save_cache()
+                        print(f"Progress saved: {len(all_new_data)} new Q&A pairs")
+
         except Exception as e:
             print(f"Error processing source {url}: {str(e)}")
 
     # Process International sources
     print("\nProcessing International sources...")
     for url in config.sources["international"]:
-        if not config.running:
+        if config.should_stop:
             break
         try:
             response = requests.get(url, headers=config.headers, timeout=10)
@@ -125,18 +144,22 @@ def main():
                     if a['href'] and '/article/' in a['href'].lower()]
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = [executor.submit(process_url, link, "international") for link in links[:10]]
+                futures = [executor.submit(process_url, link, "international", config) for link in links[:10]]
                 for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
-                    if not config.running:
-                        executor.shutdown(wait=False)
+                    if config.should_stop:
                         break
                     all_new_data.extend(future.result())
+                    processed_urls += 1
+                    if processed_urls % 10 == 0:
+                        update_database(all_new_data)
+                        config.save_cache()
+                        print(f"Progress saved: {len(all_new_data)} new Q&A pairs")
+
         except Exception as e:
             print(f"Error processing source {url}: {str(e)}")
 
-    # Update database
-    if all_new_data:
-        update_database(all_new_data)
+    # Final update
+    update_database(all_new_data)
     config.save_cache()
 
     print(f"\nUpdate completed:")
