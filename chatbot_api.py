@@ -4,7 +4,11 @@ from transformers import pipeline
 app = Flask(__name__)
 
 # بارگذاری مدل فاین‌تیون شده
-qa_pipeline = pipeline("question-answering", model="./ielts_model", tokenizer="./ielts_model")
+qa_pipeline = pipeline(
+    "question-answering",
+    model="./ielts_model_pro",
+    tokenizer="./ielts_model_pro"
+)
 
 # متن مرجع پیش‌فرض (برای سوالاتی که نیاز به context دارن)
 default_context = """
