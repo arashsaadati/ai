@@ -1,13 +1,12 @@
 import json
-import numpy as np
 from transformers import DistilBertTokenizerFast, DistilBertForQuestionAnswering, Trainer, TrainingArguments
 from datasets import Dataset
 
-# 1. Initialize tokenizer and model
+# Initialize tokenizer and model
 tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
 model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
 
-# 2. Dataset loading with validation
+# Dataset loading
 def load_dataset(filepath):
     with open(filepath, 'r', encoding='utf-8') as f:
         raw_data = json.load(f)
@@ -20,7 +19,6 @@ def load_dataset(filepath):
         context = str(item['context'])
         answer = str(item['answer'])
         
-        # Case-insensitive search if exact match fails
         if answer not in context and answer.lower() not in context.lower():
             continue
             
@@ -38,10 +36,13 @@ def load_dataset(filepath):
 
 dataset = load_dataset('ielts_dataset.json')
 
-# 3. Preprocessing with proper stride handling
+# Preprocessing with dynamic stride calculation
 def preprocess_function(examples):
-    max_length = 384  # Reduced from 512 for better memory usage
-    stride = 64  # Must be significantly smaller than max_length
+    # Calculate safe max_length and stride
+    max_length = 384
+    num_special_tokens = 3  # [CLS], [SEP], [SEP]
+    effective_max_len = max_length - num_special_tokens
+    stride = min(64, effective_max_len // 4)  # Ensure stride is at most 1/4 of effective length
     
     inputs = tokenizer(
         examples["question"],
@@ -54,7 +55,6 @@ def preprocess_function(examples):
         padding="max_length"
     )
     
-    # Initialize positions
     start_positions = []
     end_positions = []
     
@@ -63,7 +63,6 @@ def preprocess_function(examples):
         answer = examples["answer"][sample_idx]
         context = examples["context"][sample_idx]
         
-        # Find character positions
         start_char = context.find(answer)
         if start_char == -1:
             start_char = context.lower().find(answer.lower())
@@ -75,11 +74,10 @@ def preprocess_function(examples):
             
         end_char = start_char + len(answer)
         
-        # Get sequence ids and offsets
         sequence_ids = inputs.sequence_ids(i)
         offsets = inputs["offset_mapping"][i]
         
-        # Find context span (1 represents context tokens)
+        # Find context span
         context_start = 0
         while context_start < len(sequence_ids) and sequence_ids[context_start] != 1:
             context_start += 1
@@ -88,7 +86,6 @@ def preprocess_function(examples):
         while context_end >= 0 and sequence_ids[context_end] != 1:
             context_end -= 1
             
-        # If answer is outside the span
         if offsets[context_start][0] > end_char or offsets[context_end][1] < start_char:
             start_positions.append(0)
             end_positions.append(0)
@@ -108,7 +105,6 @@ def preprocess_function(examples):
     inputs["start_positions"] = start_positions
     inputs["end_positions"] = end_positions
     
-    # Convert to lists to avoid tensor issues
     return {
         "input_ids": inputs["input_ids"],
         "attention_mask": inputs["attention_mask"],
@@ -116,7 +112,7 @@ def preprocess_function(examples):
         "end_positions": end_positions
     }
 
-# 4. Dataset preparation
+# Dataset preparation
 train_test_split = dataset.train_test_split(test_size=0.1)
 tokenized_train = train_test_split["train"].map(
     preprocess_function,
@@ -131,7 +127,7 @@ tokenized_eval = train_test_split["test"].map(
     batch_size=4
 )
 
-# 5. Training configuration
+# Training configuration
 training_args = TrainingArguments(
     output_dir="./ielts_model",
     evaluation_strategy="steps",
@@ -148,8 +144,8 @@ training_args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    fp16=True,
-    dataloader_num_workers=2
+    fp16=False,  # Disable mixed precision if issues persist
+    dataloader_num_workers=1
 )
 
 trainer = Trainer(
@@ -159,11 +155,12 @@ trainer = Trainer(
     eval_dataset=tokenized_eval,
 )
 
-# 6. Training execution
+# Training execution
 print("Starting training...")
 trainer.train()
+print("Training complete!")
 
 print("Saving model...")
 trainer.save_model("./ielts_model_final")
 tokenizer.save_pretrained("./ielts_model_final")
-print("Training complete!")
+print("Model saved successfully!")
