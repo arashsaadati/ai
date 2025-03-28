@@ -1,140 +1,123 @@
 import json
-import pandas as pd  # <-- Add this import
+import pandas as pd
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering, Trainer, TrainingArguments
 from datasets import Dataset
 import torch
 from tqdm import tqdm
 
-# 1. Use XLM-RoBERTa for better multilingual support
-model_name = "xlm-roberta-base"
+# 1. Use ParsBERT for best Persian support
+model_name = "HooshvareLab/bert-fa-base-uncased"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForQuestionAnswering.from_pretrained(model_name)
 
-# 2. Enhanced dataset validation
+# 2. Load and validate dataset
 with open('ielts_dataset.json', 'r', encoding='utf-8') as f:
     raw_data = json.load(f)["data"]
 
+# 3. Manual validation with exact positions
 processed_data = []
-for sample in tqdm(raw_data, desc="Validating samples"):
-    context = sample["context"].strip()
-    answer = sample["answer"].strip()
-    question = sample["question"].strip()
+for sample in raw_data:
+    context = sample["context"]
+    answer = sample["answer"]
+    start_pos = context.find(answer)
     
-    # Find all answer occurrences
-    start_indices = [i for i in range(len(context)) if context.startswith(answer, i)]
-    
-    if not start_indices:
-        print(f"⚠️ Answer not found: '{answer}' in context: '{context[:50]}...'")
+    if start_pos == -1:
+        print(f"❌ Answer not found: '{answer}' in:\n{context}")
         continue
-    
+        
     processed_data.append({
-        "question": question,
+        "question": sample["question"],
         "context": context,
         "answer": answer,
-        "answer_start": start_indices[0],  # Use first occurrence
-        "answer_end": start_indices[0] + len(answer)
+        "answer_start": start_pos,
+        "answer_end": start_pos + len(answer)
     })
 
-print(f"✅ Using {len(processed_data)}/{len(raw_data)} valid samples")
+print(f"✅ Valid samples: {len(processed_data)}/{len(raw_data)}")
 
-# 3. Create dataset using pandas DataFrame
+# 4. Convert to Dataset
 dataset = Dataset.from_pandas(pd.DataFrame(processed_data))
 
+# 5. Improved preprocessing
 def preprocess_function(examples):
-    tokenized_inputs = tokenizer(
+    inputs = tokenizer(
         examples["question"],
         examples["context"],
-        max_length=384,
+        max_length=256,
         truncation="only_second",
-        stride=128,
+        stride=64,
         return_overflowing_tokens=True,
         return_offsets_mapping=True,
         padding="max_length"
     )
 
-    sample_mapping = tokenized_inputs.pop("overflow_to_sample_mapping")
-    offset_mapping = tokenized_inputs.pop("offset_mapping")
+    offset_mapping = inputs.pop("offset_mapping")
+    sample_map = inputs.pop("overflow_to_sample_mapping")
 
-    tokenized_inputs["start_positions"] = []
-    tokenized_inputs["end_positions"] = []
+    inputs["start_positions"] = []
+    inputs["end_positions"] = []
 
     for i, offsets in enumerate(offset_mapping):
-        input_ids = tokenized_inputs["input_ids"][i]
-        sequence_ids = tokenized_inputs.sequence_ids(i)
+        sample_idx = sample_map[i]
+        answer_start = examples["answer_start"][sample_idx]
+        answer_end = examples["answer_end"][sample_idx]
 
-        # Get the sample context
-        sample_index = sample_mapping[i]
-        answer_start = examples["answer_start"][sample_index]
-        answer_end = examples["answer_end"][sample_index]
+        sequence_ids = inputs.sequence_ids(i)
+        context_start = sequence_ids.index(1)
+        context_end = len(sequence_ids) - 1 - sequence_ids[::-1].index(1)
 
-        # Find start and end of context
-        context_start = 0
-        while sequence_ids[context_start] != 1:
-            context_start += 1
-        
-        context_end = len(sequence_ids) - 1
-        while sequence_ids[context_end] != 1:
-            context_end -= 1
-
-        # If answer is out of span
-        if offsets[context_start][0] > answer_end or offsets[context_end][1] < answer_start:
-            tokenized_inputs["start_positions"].append(0)
-            tokenized_inputs["end_positions"].append(0)
+        # If answer is not in this chunk
+        if (offsets[context_start][0] > answer_end or 
+            offsets[context_end][1] < answer_start):
+            inputs["start_positions"].append(0)
+            inputs["end_positions"].append(0)
         else:
-            # Find token positions
-            start_token = context_start
-            while start_token <= context_end and offsets[start_token][0] <= answer_start:
-                start_token += 1
-            tokenized_inputs["start_positions"].append(start_token - 1)
+            # Find start token
+            token_start = context_start
+            while token_start <= context_end and offsets[token_start][0] <= answer_start:
+                token_start += 1
+            inputs["start_positions"].append(token_start - 1)
 
-            end_token = context_end
-            while end_token >= context_start and offsets[end_token][1] >= answer_end:
-                end_token -= 1
-            tokenized_inputs["end_positions"].append(end_token + 1)
+            # Find end token
+            token_end = context_end
+            while token_end >= context_start and offsets[token_end][1] >= answer_end:
+                token_end -= 1
+            inputs["end_positions"].append(token_end + 1)
 
-    return tokenized_inputs
+    return inputs
 
-# 4. Apply preprocessing
+# 6. Apply preprocessing
 tokenized_dataset = dataset.map(
     preprocess_function,
     batched=True,
     remove_columns=dataset.column_names
 )
 
-# 5. Split into train and eval sets
-split_dataset = tokenized_dataset.train_test_split(test_size=0.2)
-
-# 6. Enhanced training configuration
+# 7. Training configuration
 training_args = TrainingArguments(
-    output_dir="./ielts_model_enhanced",
+    output_dir="./ielts_model_pro",
     evaluation_strategy="steps",
-    eval_steps=300,
-    save_steps=300,
-    learning_rate=5e-5,
-    per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    num_train_epochs=4,
-    weight_decay=0.01,
+    eval_steps=100,
+    save_steps=100,
+    learning_rate=3e-5,
+    per_device_train_batch_size=4,
+    num_train_epochs=10,
     warmup_ratio=0.1,
+    weight_decay=0.01,
     logging_dir="./logs",
-    load_best_model_at_end=True,
-    metric_for_best_model="eval_loss",
-    greater_is_better=False,
-    fp16=torch.cuda.is_available()  # Enable mixed precision if GPU available
+    fp16=torch.cuda.is_available(),
+    load_best_model_at_end=True
 )
 
+# 8. Trainer setup
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=split_dataset["train"],
-    eval_dataset=split_dataset["test"],
+    train_dataset=tokenized_dataset,
     tokenizer=tokenizer,
 )
 
-# 7. Train the model
+# 9. Train and save
 trainer.train()
-
-# 8. Save the final model
-trainer.save_model("./ielts_model_final")
-tokenizer.save_pretrained("./ielts_model_final")
-print("✅ Training completed and model saved!")
+trainer.save_model("./ielts_model_pro")
+tokenizer.save_pretrained("./ielts_model_pro")
