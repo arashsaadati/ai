@@ -2,23 +2,15 @@ from transformers import pipeline
 
 qa_pipeline = pipeline(
     "question-answering",
-    model="./ielts_model",
-    tokenizer="./ielts_model"
+    model="./ielts_model_final",
+    tokenizer="./ielts_model_final"
 )
 
-test_cases = [
-    {
-        "context": "هزینه آزمون آیلتس حدود ۶ میلیون تومان است. برای اطلاعات دقیق به سایت مراجعه کنید.",
-        "question": "هزینه آزمون چقدر است؟"
-    },
-    {
-        "context": "بخش رایتینگ آزمون آیلتس شامل دو تسک می‌شود.",
-        "question": "رایتینگ آیلتس چند بخش دارد؟"
-    }
-]
+test_sample = {
+    "context": "هزینه آزمون آیلتس حدود ۶ میلیون تومان است.",
+    "question": "هزینه آزمون چقدر است؟"
+}
 
-for case in test_cases:
-    result = qa_pipeline(case)
-    print(f"Q: {case['question']}")
-    print(f"A: {result['answer']}")
-    print(f"Score: {result['score']:.2f}\n")
+result = qa_pipeline(test_sample)
+print(f"Question: {test_sample['question']}")
+print(f"Answer: {result['answer']} (Score: {result['score']:.4f})")
