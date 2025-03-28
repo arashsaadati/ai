@@ -1,9 +1,9 @@
 import json
-from transformers import DistilBertTokenizer, DistilBertForQuestionAnswering, Trainer, TrainingArguments
+from transformers import DistilBertTokenizerFast, DistilBertForQuestionAnswering, Trainer, TrainingArguments
 from datasets import Dataset
 
 # Load model and tokenizer
-tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
+tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
 model = DistilBertForQuestionAnswering.from_pretrained("distilbert-base-uncased")
 
 # Load and validate dataset
@@ -12,14 +12,19 @@ with open('ielts_dataset.json', 'r', encoding='utf-8') as f:
     if "data" not in raw_data:
         raise ValueError("JSON file must contain a 'data' key")
     
-    # Validate each item has required fields
+    # Validate each item has required fields and answers are in contexts
     data = []
     for item in raw_data["data"]:
         if not all(k in item for k in ['question', 'context', 'answer']):
+            print(f"Skipping item missing required fields: {item}")
             continue
         if item['answer'] not in item['context']:
+            print(f"Skipping item where answer not in context: {item['answer']}")
             continue
         data.append(item)
+
+    if not data:
+        raise ValueError("No valid data found after validation")
 
 dataset = Dataset.from_dict({
     'question': [item['question'] for item in data],
@@ -27,18 +32,18 @@ dataset = Dataset.from_dict({
     'answer': [item['answer'] for item in data]
 })
 
-# Improved preprocessing function
+# Preprocessing function
 def preprocess_function(examples):
     questions = [q.strip() for q in examples["question"]]
     contexts = [c.strip() for c in examples["context"]]
     answers = [a.strip() for a in examples["answer"]]
 
-    # Tokenize with proper truncation strategy for QA
+    # Tokenize with fast tokenizer
     inputs = tokenizer(
         questions,
         contexts,
         max_length=512,
-        truncation="only_second",  # This truncates only the context (second sequence)
+        truncation="only_second",  # Truncate only the context
         stride=128,  # For handling overflow
         return_overflowing_tokens=True,
         return_offsets_mapping=True,
@@ -61,37 +66,37 @@ def preprocess_function(examples):
         start_char = context.find(answer)
         end_char = start_char + len(answer)
         
-        if start_char == -1:
-            # Answer not found in context (shouldn't happen if data is clean)
-            start_positions.append(0)
-            end_positions.append(0)
-            continue
-            
-        # Find the token positions
-        sequence_ids = inputs.sequence_ids(i)
+        # Initialize to 0 (will be used if answer not found)
+        start_pos = 0
+        end_pos = 0
         
-        # Find the start and end of the context
-        token_start_index = 0
-        while sequence_ids[token_start_index] != 1:
-            token_start_index += 1
+        if start_char != -1:
+            # Find the token positions
+            sequence_ids = inputs.sequence_ids(i)
             
-        token_end_index = len(sequence_ids) - 1
-        while sequence_ids[token_end_index] != 1:
-            token_end_index -= 1
-            
-        # If the answer is out of the span, set to 0
-        if offsets[token_start_index][0] > end_char or offsets[token_end_index][1] < start_char:
-            start_positions.append(0)
-            end_positions.append(0)
-        else:
-            # Otherwise find the start and end token indices
-            while token_start_index < len(offsets) and offsets[token_start_index][0] <= start_char:
+            # Find the start and end of the context (1 represents context tokens)
+            token_start_index = 0
+            while sequence_ids[token_start_index] != 1:
                 token_start_index += 1
-            start_positions.append(token_start_index - 1)
-            
-            while offsets[token_end_index][1] >= end_char:
+                
+            token_end_index = len(sequence_ids) - 1
+            while sequence_ids[token_end_index] != 1:
                 token_end_index -= 1
-            end_positions.append(token_end_index + 1)
+                
+            # If the answer is within the span
+            if not (offsets[token_start_index][0] > end_char or offsets[token_end_index][1] < start_char):
+                # Find start token index
+                while token_start_index < len(offsets) and offsets[token_start_index][0] <= start_char:
+                    token_start_index += 1
+                start_pos = token_start_index - 1
+                
+                # Find end token index
+                while offsets[token_end_index][1] >= end_char:
+                    token_end_index -= 1
+                end_pos = token_end_index + 1
+
+        start_positions.append(start_pos)
+        end_positions.append(end_pos)
 
     inputs["start_positions"] = start_positions
     inputs["end_positions"] = end_positions
@@ -99,10 +104,18 @@ def preprocess_function(examples):
 
 # Split and tokenize dataset
 train_test_split = dataset.train_test_split(test_size=0.1)
-tokenized_train_dataset = train_test_split['train'].map(preprocess_function, batched=True, remove_columns=train_test_split['train'].column_names)
-tokenized_eval_dataset = train_test_split['test'].map(preprocess_function, batched=True, remove_columns=train_test_split['test'].column_names)
+tokenized_train_dataset = train_test_split['train'].map(
+    preprocess_function,
+    batched=True,
+    remove_columns=train_test_split['train'].column_names
+)
+tokenized_eval_dataset = train_test_split['test'].map(
+    preprocess_function,
+    batched=True,
+    remove_columns=train_test_split['test'].column_names
+)
 
-# Enhanced training arguments
+# Training arguments
 training_args = TrainingArguments(
     output_dir="./ielts_model",
     evaluation_strategy="epoch",
@@ -117,10 +130,12 @@ training_args = TrainingArguments(
     fp16=True,
     logging_dir='./logs',
     logging_steps=50,
-    report_to="tensorboard"
+    report_to="tensorboard",
+    warmup_ratio=0.1,
+    save_total_limit=2
 )
 
-# Train model
+# Initialize Trainer
 trainer = Trainer(
     model=model,
     args=training_args,
@@ -128,9 +143,11 @@ trainer = Trainer(
     eval_dataset=tokenized_eval_dataset,
 )
 
+# Train and save model
+print("Starting training...")
 trainer.train()
 
-# Save model
+print("Training complete. Saving model...")
 model.save_pretrained("./ielts_model")
 tokenizer.save_pretrained("./ielts_model")
-print("Model trained and saved successfully!")
+print("Model saved successfully!")
