@@ -30,7 +30,7 @@ class IELTSConfig:
         }
         self.running = True  # For graceful shutdown
         self.load_sources()
-        self.load_cache()
+        # self.load_cache()
         self.setup_models()
 
     def load_sources(self):
