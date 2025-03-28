@@ -28,7 +28,7 @@ dataset = Dataset.from_dict({
 })
 
 # Improved preprocessing function
-def preprocess_function(examples):
+def __preprocess_function(examples):
     questions = [q.strip() for q in examples["question"]]
     contexts = [c.strip() for c in examples["context"]]
     answers = [a.strip() for a in examples["answer"]]
@@ -40,6 +40,7 @@ def preprocess_function(examples):
         max_length=512,
         truncation="only_second",
         stride=128,
+        return_overflowing_tokens=True
         return_offsets_mapping=True,
         padding="max_length"
     )
@@ -75,6 +76,75 @@ def preprocess_function(examples):
             end_positions.append(0)
         else:
             # Otherwise find start and end token indices
+            while token_start_index < len(offsets) and offsets[token_start_index][0] <= start_char:
+                token_start_index += 1
+            start_positions.append(token_start_index - 1)
+            
+            while offsets[token_end_index][1] >= end_char:
+                token_end_index -= 1
+            end_positions.append(token_end_index + 1)
+
+    inputs["start_positions"] = start_positions
+    inputs["end_positions"] = end_positions
+    return inputs
+
+def preprocess_function(examples):
+    questions = [q.strip() for q in examples["question"]]
+    contexts = [c.strip() for c in examples["context"]]
+    answers = [a.strip() for a in examples["answer"]]
+
+    # Tokenize with proper truncation strategy for QA
+    inputs = tokenizer(
+        questions,
+        contexts,
+        max_length=512,
+        truncation="only_second",  # This truncates only the context (second sequence)
+        stride=128,  # For handling overflow
+        return_overflowing_tokens=True,
+        return_offsets_mapping=True,
+        padding="max_length"
+    )
+
+    # Get the mapping from overflowing tokens to original samples
+    sample_map = inputs.pop("overflow_to_sample_mapping")
+    offset_mapping = inputs.pop("offset_mapping")
+    
+    start_positions = []
+    end_positions = []
+
+    for i, offsets in enumerate(offset_mapping):
+        sample_idx = sample_map[i]
+        answer = answers[sample_idx]
+        context = contexts[sample_idx]
+        
+        # Find character positions in original context
+        start_char = context.find(answer)
+        end_char = start_char + len(answer)
+        
+        if start_char == -1:
+            # Answer not found in context (shouldn't happen if data is clean)
+            start_positions.append(0)
+            end_positions.append(0)
+            continue
+            
+        # Find the token positions
+        sequence_ids = inputs.sequence_ids(i)
+        
+        # Find the start and end of the context
+        token_start_index = 0
+        while sequence_ids[token_start_index] != 1:
+            token_start_index += 1
+            
+        token_end_index = len(sequence_ids) - 1
+        while sequence_ids[token_end_index] != 1:
+            token_end_index -= 1
+            
+        # If the answer is out of the span, set to 0
+        if offsets[token_start_index][0] > end_char or offsets[token_end_index][1] < start_char:
+            start_positions.append(0)
+            end_positions.append(0)
+        else:
+            # Otherwise find the start and end token indices
             while token_start_index < len(offsets) and offsets[token_start_index][0] <= start_char:
                 token_start_index += 1
             start_positions.append(token_start_index - 1)
