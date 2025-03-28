@@ -26,7 +26,8 @@ def preprocess_function(examples):
     contexts = [c.strip() for c in examples["context"]]
     answers = [a.strip() for a in examples["answer"]]
 
-    encodings = tokenizer(questions, contexts, truncation=True, padding=True, max_length=512)
+    #encodings = tokenizer(questions, contexts, truncation=True, padding=True, max_length=512)
+    encodings = tokenizer(questions, contexts, truncation=True, padding=True, max_length=512, return_overflowing_tokens=True)
 
     start_positions = []
     end_positions = []
