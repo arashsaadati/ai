@@ -54,14 +54,15 @@ class Config:
                 "https://khaneyeielts.org/",
                 "https://ielts2.com/",
                 "https://www.ielts4migration.com/"
-            ],
-            "international": [
-                "https://www.ielts.org",
-                "https://ieltstheory.com/home/",
-                "https://www.cambridgeenglish.org/exams-and-tests/ielts",
-                "https://takeielts.britishcouncil.org",
-                "https://ielts.idp.com"
             ]
+            # ,
+            # "international": [
+            #     "https://www.ielts.org",
+            #     "https://ieltstheory.com/home/",
+            #     "https://www.cambridgeenglish.org/exams-and-tests/ielts",
+            #     "https://takeielts.britishcouncil.org",
+            #     "https://ielts.idp.com"
+            # ]
         }
         
         self.backup_sources = {
