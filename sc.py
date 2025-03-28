@@ -106,13 +106,27 @@ class IELTSConfig:
         self.cache = {"scraped_urls": {}, "last_checked": {}}
         self.database = {"data": [], "metadata": {}}
         
+        # Load cache file
         if os.path.exists(self.cache_file):
-            with open(self.cache_file, 'r', encoding='utf-8') as f:
-                self.cache = json.load(f)
+            try:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+                    if file_content.strip():  # Check if file is not empty
+                        self.cache = json.loads(file_content)
+            except json.JSONDecodeError:
+                print(f"Warning: Cache file {self.cache_file} is corrupted, creating new one")
+                self.cache = {"scraped_urls": {}, "last_checked": {}}
         
+        # Load database file
         if os.path.exists(self.data_file):
-            with open(self.data_file, 'r', encoding='utf-8') as f:
-                self.database = json.load(f)
+            try:
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+                    if file_content.strip():  # Check if file is not empty
+                        self.database = json.loads(file_content)
+            except json.JSONDecodeError:
+                print(f"Warning: Database file {self.data_file} is corrupted, creating new one")
+                self.database = {"data": [], "metadata": {}}
     
     def save_cache(self):
         """Save cache and database"""
