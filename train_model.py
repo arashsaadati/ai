@@ -1,4 +1,5 @@
 import json
+import pandas as pd  # <-- Add this import
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering, Trainer, TrainingArguments
 from datasets import Dataset
 import torch
@@ -36,7 +37,7 @@ for sample in tqdm(raw_data, desc="Validating samples"):
 
 print(f"✅ Using {len(processed_data)}/{len(raw_data)} valid samples")
 
-# 3. Improved dataset preparation
+# 3. Create dataset using pandas DataFrame
 dataset = Dataset.from_pandas(pd.DataFrame(processed_data))
 
 def preprocess_function(examples):
@@ -100,7 +101,10 @@ tokenized_dataset = dataset.map(
     remove_columns=dataset.column_names
 )
 
-# 5. Enhanced training configuration
+# 5. Split into train and eval sets
+split_dataset = tokenized_dataset.train_test_split(test_size=0.2)
+
+# 6. Enhanced training configuration
 training_args = TrainingArguments(
     output_dir="./ielts_model_enhanced",
     evaluation_strategy="steps",
@@ -116,17 +120,21 @@ training_args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    fp16=True  # Enable mixed precision training
+    fp16=torch.cuda.is_available()  # Enable mixed precision if GPU available
 )
 
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=tokenized_dataset,
-    eval_dataset=tokenized_dataset,
+    train_dataset=split_dataset["train"],
+    eval_dataset=split_dataset["test"],
     tokenizer=tokenizer,
 )
 
-# 6. Train with progress monitoring
+# 7. Train the model
 trainer.train()
-trainer.save_model("./ielts_model_enhanced")
+
+# 8. Save the final model
+trainer.save_model("./ielts_model_final")
+tokenizer.save_pretrained("./ielts_model_final")
+print("✅ Training completed and model saved!")
